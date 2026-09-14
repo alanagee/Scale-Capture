@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Print Target Marker — Scale Capture</title>
+<style>
+  :root{
+    --bg:#0d0f14; --panel:#161a22; --panel2:#1d222c; --border:#2a303c;
+    --text:#eef1f6; --muted:#9aa4b2; --accent:#00d1a0;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;}
+  .ui{max-width:640px; margin:0 auto; padding:18px;}
+  h1{font-size:19px; margin:0 0 4px;}
+  .sub{color:var(--muted); font-size:13px; margin:0 0 18px;}
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px; margin-bottom:14px;}
+  .card h2{font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 12px;}
+  .row{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px;}
+  label{font-size:15px;}
+  input[type=number]{width:88px; background:var(--panel2); border:1px solid var(--border); color:var(--text); border-radius:9px; padding:9px 10px; font-size:16px; text-align:right;}
+  select{background:var(--panel2); border:1px solid var(--border); color:var(--text); border-radius:9px; padding:9px 10px; font-size:15px;}
+  .hint{font-size:12.5px; color:var(--muted); line-height:1.5; margin-top:4px;}
+  .hint b{color:var(--text);}
+  .btn{display:block; width:100%; padding:16px; border-radius:14px; border:none; font-size:17px; font-weight:600; cursor:pointer; background:var(--accent); color:#04211a; text-align:center; text-decoration:none;}
+  ol{padding-left:20px; font-size:14px; line-height:1.7; color:var(--text);}
+  ol li b{color:var(--accent);}
+  a.back{color:var(--muted); font-size:13px;}
+
+  /* ---------------- print sheets ---------------- */
+  #sheets{display:none;}
+  .page{
+    position:relative; width:8.5in; height:11in; background:#fff; color:#000;
+    overflow:hidden; page-break-after:always;
+  }
+  .window{
+    position:absolute; overflow:hidden; border:1px dashed #999;
+  }
+  .bigsquare{position:absolute; background:#000;}
+  .crosshair{position:absolute; width:0.28in; height:0.28in; margin:-0.14in 0 0 -0.14in;
+    background:radial-gradient(circle, #fff 58%, transparent 60%);}
+  .crosshair::before, .crosshair::after{content:""; position:absolute; background:#000;}
+  .crosshair::before{left:50%; top:0; width:1px; height:100%; margin-left:-0.5px;}
+  .crosshair::after{top:50%; left:0; height:1px; width:100%; margin-top:-0.5px;}
+  .tilelabel{position:absolute; font-size:9px; font-family:monospace; color:#000;}
+  .ruler{position:absolute; }
+  .ruler .bar{position:relative; height:2px; background:#000;}
+  .ruler .tick{position:absolute; top:-4px; width:1px; height:10px; background:#000;}
+  .ruler .ticklabel{position:absolute; top:8px; font-size:7px; font-family:monospace; transform:translateX(-50%);}
+  .ruler .caption{font-size:8px; font-family:monospace; margin-top:14px; width:3.2in;}
+
+  @media print{
+    .ui{display:none;}
+    #sheets{display:block;}
+    @page{ size: letter portrait; margin:0; }
+    body{background:#fff;}
+  }
+</style>
+</head>
+<body>
+
+<div class="ui">
+  <a class="back" href="index.html">&larr; Back to Scale Capture</a>
+  <h1 style="margin-top:10px;">Print a Target Marker</h1>
+  <p class="sub">A precise black square, sized to print across one or more Letter sheets that you trim and tape together.</p>
+
+  <div class="card">
+    <h2>Marker size</h2>
+    <div class="row">
+      <label for="size">Black square size</label>
+      <div><input type="number" id="size" min="2" step="0.5" value="10"> in</div>
+    </div>
+    <div class="hint">Matches the <b>target size</b> setting in the Scale Capture app — set it the same in both places. Squares up to about 7×7&Prime; print on a single sheet; larger ones tile across multiple sheets.</div>
+    <div id="planSummary" class="hint" style="margin-top:10px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>How to build it</h2>
+    <ol>
+      <li>Print this page at <b>100% / Actual Size</b> — make sure "Fit to page" or "Scale to fit" is turned <b>off</b>.</li>
+      <li>Check the small ruled calibration line on the first sheet with an actual ruler. It should measure exactly <b>3.00&Prime;</b>. If it doesn't, your printer is scaling the page — adjust the print scale by that ratio and reprint, or account for the difference when you set the target size in the app.</li>
+      <li>Trim each sheet along the dashed line, and line up the small + marks at matching edges when you tape sheets together.</li>
+      <li>Mount the assembled square on stiff card/board so it stays flat — it needs to lie in the same plane as whatever you're photographing.</li>
+    </ol>
+  </div>
+
+  <button class="btn" onclick="window.print()">🖨️ Print</button>
+</div>
+
+<div id="sheets"></div>
+
+<script>
+(function(){
+  const TILE_W_IN = 7.5;   // usable print width per sheet (Letter is 8.5in wide)
+  const TILE_H_IN = 10.0;  // usable print height per sheet (Letter is 11in tall)
+  const MARGIN_IN = 0.4;   // top/left inset of the tiled window on each sheet
+
+  const sizeInput = document.getElementById("size");
+  const sheetsEl = document.getElementById("sheets");
+  const summaryEl = document.getElementById("planSummary");
+
+  function loadShared(){
+    try{
+      const s = JSON.parse(localStorage.getItem("scaleCaptureSettings") || "{}");
+      if (s.targetSize) sizeInput.value = s.targetSize;
+    }catch(e){}
+  }
+  function saveShared(){
+    try{
+      const cur = JSON.parse(localStorage.getItem("scaleCaptureSettings") || "{}");
+      cur.targetSize = parseFloat(sizeInput.value) || 10;
+      localStorage.setItem("scaleCaptureSettings", JSON.stringify(cur));
+    }catch(e){}
+  }
+
+  function build(){
+    const S = Math.max(2, parseFloat(sizeInput.value) || 10);
+    saveShared();
+    const cols = Math.ceil(S / TILE_W_IN);
+    const rows = Math.ceil(S / TILE_H_IN);
+    summaryEl.innerHTML = `Prints across <b>${cols * rows}</b> sheet${cols*rows>1?"s":""} (${cols} across &times; ${rows} down) for a ${S}&Prime; &times; ${S}&Prime; square.`;
+
+    sheetsEl.innerHTML = "";
+    for (let r = 0; r < rows; r++){
+      for (let c = 0; c < cols; c++){
+        const page = document.createElement("div");
+        page.className = "page";
+
+        const win = document.createElement("div");
+        win.className = "window";
+        const winW = Math.min(TILE_W_IN, S - c*TILE_W_IN);
+        const winH = Math.min(TILE_H_IN, S - r*TILE_H_IN);
+        win.style.left = MARGIN_IN + "in";
+        win.style.top = MARGIN_IN + "in";
+        win.style.width = winW + "in";
+        win.style.height = winH + "in";
+
+        const sq = document.createElement("div");
+        sq.className = "bigsquare";
+        sq.style.left = (-c*TILE_W_IN) + "in";
+        sq.style.top = (-r*TILE_H_IN) + "in";
+        sq.style.width = S + "in";
+        sq.style.height = S + "in";
+        win.appendChild(sq);
+
+        // crosshairs at the 4 corners of this tile's window
+        [[0,0],[winW,0],[0,winH],[winW,winH]].forEach(([dx,dy])=>{
+          const ch = document.createElement("div");
+          ch.className = "crosshair";
+          ch.style.left = dx + "in";
+          ch.style.top = dy + "in";
+          win.appendChild(ch);
+        });
+
+        page.appendChild(win);
+
+        const label = document.createElement("div");
+        label.className = "tilelabel";
+        label.style.left = MARGIN_IN + "in";
+        label.style.top = (MARGIN_IN + winH + 0.12) + "in";
+        label.textContent = `Scale Capture marker — sheet col ${c+1}/${cols}, row ${r+1}/${rows} — target ${S}in`;
+        page.appendChild(label);
+
+        if (r===0 && c===0){
+          const ruler = buildRuler();
+          ruler.style.left = MARGIN_IN + "in";
+          ruler.style.top = (MARGIN_IN + winH + 0.35) + "in";
+          page.appendChild(ruler);
+        }
+
+        sheetsEl.appendChild(page);
+      }
+    }
+  }
+
+  function buildRuler(){
+    const wrap = document.createElement("div");
+    wrap.className = "ruler";
+    wrap.style.width = "3.2in";
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    bar.style.width = "3in";
+    for (let i=0;i<=3;i++){
+      const tick = document.createElement("div");
+      tick.className = "tick";
+      tick.style.left = i + "in";
+      bar.appendChild(tick);
+      const lbl = document.createElement("div");
+      lbl.className = "ticklabel";
+      lbl.style.left = i + "in";
+      lbl.textContent = i;
+      bar.appendChild(lbl);
+    }
+    wrap.appendChild(bar);
+    const cap = document.createElement("div");
+    cap.className = "caption";
+    cap.textContent = "Calibration: this line should measure exactly 3.00in at 100% print scale.";
+    wrap.appendChild(cap);
+    return wrap;
+  }
+
+  sizeInput.addEventListener("input", build);
+  loadShared();
+  build();
+})();
+</script>
+</body>
+</html>
